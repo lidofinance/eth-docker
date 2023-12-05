@@ -83,6 +83,10 @@ services:
       - "8008"
       - --suggested-fee-recipient
       - ${FEE_RECIPIENT}
+    labels:
+      - metrics.scrape=true
+      - metrics.path=/metrics
+      - metrics.port=8008
 
   validator:
     restart: "unless-stopped"
@@ -143,6 +147,9 @@ services:
       - traefik.http.routers.prysm.rule=Host(`${PRYSM_HOST}.${DOMAIN}`)
       - traefik.http.routers.prysm.tls.certresolver=letsencrypt
       - traefik.http.services.prysm.loadbalancer.server.port=${KEY_API_PORT:-7500}
+      - metrics.scrape=true
+      - metrics.path=/metrics
+      - metrics.port=8009
 
   create-wallet:
     profiles: ["tools"]
@@ -163,22 +170,14 @@ services:
   validator-exit:
     profiles: ["tools"]
     restart: "no"
-    build:
-      target: validator
-      <<: *prysm-build
-    image: prysm-validator:local
-    user: prysmvalidator
+    image: ${PRYSM_DOCKER_CTL_REPO}:${PRYSM_DOCKER_CTL_TAG}
     volumes:
       - prysmvalidator-data:/var/lib/prysm
       - /etc/localtime:/etc/localtime:ro
     entrypoint:
+      - /app/cmd/prysmctl/prysmctl
       - validator
-      - --verbosity
-      - ${LOG_LEVEL}
-      - --datadir
-      - /var/lib/prysm
-      - accounts
-      - voluntary-exit
+      - exit
       - --wallet-dir=/var/lib/prysm/
       - --beacon-rpc-provider=consensus:4000
       - --wallet-password-file=/var/lib/prysm/password.txt

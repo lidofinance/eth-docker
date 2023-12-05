@@ -38,6 +38,8 @@ services:
       - CL_EXTRAS=${CL_EXTRAS:-}
       - ARCHIVE_NODE=${ARCHIVE_NODE:-}
       - NETWORK=${NETWORK}
+      - IPV6=${IPV6:-false}
+      - CL_P2P_PORT=${CL_P2P_PORT:-9000}
       - NODE_OPTIONS=${LODESTAR_HEAP:---max-old-space-size=4096}
     ports:
       - ${HOST_IP:-}${CL_P2P_PORT:-9000}:${CL_P2P_PORT:-9000}/tcp
@@ -74,16 +76,10 @@ services:
       - --suggestedFeeRecipient
       - ${FEE_RECIPIENT}
     labels:
-      - traefik.enable=true
-      - traefik.http.routers.${CL_HOST:-cl}.service=${CL_HOST:-cl}
-      - traefik.http.routers.${CL_HOST:-cl}.entrypoints=websecure
-      - traefik.http.routers.${CL_HOST:-cl}.rule=Host(`${CL_HOST:-cl}.${DOMAIN}`)
-      - traefik.http.routers.${CL_HOST:-cl}.tls.certresolver=letsencrypt
-      - traefik.http.routers.${CL_HOST:-cl}lb.service=${CL_HOST:-cl}
-      - traefik.http.routers.${CL_HOST:-cl}lb.entrypoints=websecure
-      - traefik.http.routers.${CL_HOST:-cl}lb.rule=Host(`${CL_LB:-cl-lb}.${DOMAIN}`)
-      - traefik.http.routers.${CL_HOST:-cl}lb.tls.certresolver=letsencrypt
-      - traefik.http.services.${CL_HOST:-cl}.loadbalancer.server.port=${CL_REST_PORT:-5052}
+      - metrics.scrape=true
+      - metrics.path=/metrics
+      - metrics.port=8008
+
 volumes:
   lsconsensus-data:
   jwtsecret:

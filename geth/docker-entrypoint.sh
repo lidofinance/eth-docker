@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
 if [ "$(id -u)" = '0' ]; then
   chown -R geth:geth /var/lib/goethereum
@@ -90,11 +91,18 @@ if [ -d "/var/lib/goethereum/geth/chaindata/" ]; then
 else
   if [ "${ARCHIVE_NODE}" = "true" ]; then
     echo "Geth is an archive node. Syncing without PBSS."
-    _pbss=""
+    __pbss=""
   else
     echo "Choosing PBSS for fresh sync"
     __pbss="--state.scheme path"
   fi
+fi
+
+if [ "${IPV6}" = "true" ]; then
+  echo "Configuring Geth for discv5 for IPv6 advertisements"
+  __ipv6="--discv5"
+else
+  __ipv6=""
 fi
 
 if [ -f /var/lib/goethereum/prune-marker ]; then
@@ -109,5 +117,5 @@ if [ -f /var/lib/goethereum/prune-marker ]; then
 else
 # Word splitting is desired for the command line parameters
 # shellcheck disable=SC2086
-  exec "$@" ${__pbss} ${__network} ${__prune} ${__verbosity} ${EL_EXTRAS}
+  exec "$@" ${__pbss} ${__ipv6} ${__network} ${__prune} ${__verbosity} ${EL_EXTRAS}
 fi

@@ -1,4 +1,5 @@
-  - job_name: geth
+scrape_configs:
+  - job_name: erigon
     metrics_path: /debug/metrics/prometheus
     scheme: http
     static_configs:
