@@ -38,6 +38,8 @@ services:
       - CL_EXTRAS=${CL_EXTRAS:-}
       - ARCHIVE_NODE=${ARCHIVE_NODE:-}
       - NETWORK=${NETWORK}
+      - IPV6=${IPV6:-false}
+      - CL_P2P_PORT=${CL_P2P_PORT:-9000}
       - NODE_OPTIONS=${LODESTAR_HEAP:---max-old-space-size=4096}
     ports:
       - ${HOST_IP:-}${CL_P2P_PORT:-9000}:${CL_P2P_PORT:-9000}/tcp
@@ -75,6 +77,10 @@ services:
       - ${LOG_LEVEL}
       - --suggestedFeeRecipient
       - ${FEE_RECIPIENT}
+    labels:
+      - metrics.scrape=true
+      - metrics.path=/metrics
+      - metrics.port=8008
 
   validator:
     restart: "unless-stopped"
@@ -128,6 +134,10 @@ services:
       - --suggestedFeeRecipient
       - ${FEE_RECIPIENT}
       - --force
+    labels:
+      - metrics.scrape=true
+      - metrics.path=/metrics
+      - metrics.port=8009
 
   validator-exit:
     profiles: ["tools"]

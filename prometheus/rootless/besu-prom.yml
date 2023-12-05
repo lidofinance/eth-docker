@@ -1,4 +1,5 @@
-  - job_name: nethermind
+scrape_configs:
+  - job_name: besu
     metrics_path: /metrics
     scheme: http
     static_configs:
