@@ -29,7 +29,7 @@ services:
       - /etc/localtime:/etc/localtime:ro
       - jwtsecret:/var/lib/teku/ee-secret
     environment:
-      - JAVA_OPTS=${TEKU_HEAP:--Xmx4g}
+      - JAVA_OPTS=${TEKU_HEAP:--Xmx5g}
       - RAPID_SYNC_URL=${RAPID_SYNC_URL}
       - JWT_SECRET=${JWT_SECRET}
       - MEV_BOOST=${MEV_BOOST}
@@ -52,6 +52,7 @@ services:
       default:
         aliases:
           - eth2
+          - ${NETWORK}-consensus
     <<: *logging
     entrypoint:
       - docker-entrypoint.sh
@@ -80,6 +81,7 @@ services:
       - metrics.scrape=true
       - metrics.path=/metrics
       - metrics.port=8008
+      - metrics.instance=consensus
 
   validator:
     restart: "unless-stopped"
@@ -130,6 +132,7 @@ services:
       - metrics.scrape=true
       - metrics.path=/metrics
       - metrics.port=8009
+      - metrics.instance=validator
 
   validator-exit:
     profiles: ["tools"]

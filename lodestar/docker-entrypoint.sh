@@ -22,7 +22,7 @@ if [ -n "${JWT_SECRET}" ]; then
 fi
 
 if [[ -O "/var/lib/lodestar/consensus/ee-secret" ]]; then
-  # In case someone specificies JWT_SECRET but it's not a distributed setup
+  # In case someone specifies JWT_SECRET but it's not a distributed setup
   chmod 777 /var/lib/lodestar/consensus/ee-secret
 fi
 if [[ -O "/var/lib/lodestar/consensus/ee-secret/jwtsecret" ]]; then
@@ -49,15 +49,14 @@ if [[ "${NETWORK}" =~ ^https?:// ]]; then
   bootnodes="$(paste -s -d, "/var/lib/lodestar/consensus/testnet/${config_dir}/bootstrap_nodes.txt")"
   set +e
   __network="--paramsFile=/var/lib/lodestar/consensus/testnet/${config_dir}/config.yaml --genesisStateFile=/var/lib/lodestar/consensus/testnet/${config_dir}/genesis.ssz \
---bootnodes=${bootnodes} --network.connectToDiscv5Bootnodes --chain.trustedSetup=/var/lib/lodestar/consensus/testnet/${config_dir}/trusted_setup.txt \
---rest.namespace=*"
+--bootnodes=${bootnodes} --network.connectToDiscv5Bootnodes --rest.namespace=*"
 else
   __network="--network ${NETWORK}"
 fi
 
 # Check whether we should use MEV Boost
 if [ "${MEV_BOOST}" = "true" ]; then
-  __mev_boost="--builder --builder.urls=${MEV_NODE:-http://mev-boost:18550}"
+  __mev_boost="--builder --builder.url=${MEV_NODE:-http://mev-boost:18550}"
   echo "MEV Boost enabled"
 else
   __mev_boost=""

@@ -19,11 +19,18 @@ if [[ ! -f /var/lib/goethereum/ee-secret/jwtsecret ]]; then
 fi
 
 if [[ -O "/var/lib/goethereum/ee-secret" ]]; then
-  # In case someone specificies JWT_SECRET but it's not a distributed setup
+  # In case someone specifies JWT_SECRET but it's not a distributed setup
   chmod 777 /var/lib/goethereum/ee-secret
 fi
 if [[ -O "/var/lib/goethereum/ee-secret/jwtsecret" ]]; then
   chmod 666 /var/lib/goethereum/ee-secret/jwtsecret
+fi
+
+__ancient=""
+
+if [ -n "${ANCIENT_DIR}" ] && [ ! "${ANCIENT_DIR}" = ".nada" ]; then
+  echo "Using separate ancient directory at ${ANCIENT_DIR}."
+  __ancient="--datadir.ancient /var/lib/ancient"
 fi
 
 if [[ "${NETWORK}" =~ ^https?:// ]]; then
@@ -113,9 +120,9 @@ if [ -f /var/lib/goethereum/prune-marker ]; then
   fi
 # Word splitting is desired for the command line parameters
 # shellcheck disable=SC2086
-  exec "$@" ${__network} ${EL_EXTRAS} snapshot prune-state
+  exec "$@" ${__ancient} ${__network} ${EL_EXTRAS} snapshot prune-state
 else
 # Word splitting is desired for the command line parameters
 # shellcheck disable=SC2086
-  exec "$@" ${__pbss} ${__ipv6} ${__network} ${__prune} ${__verbosity} ${EL_EXTRAS}
+  exec "$@" ${__ancient} ${__pbss} ${__ipv6} ${__network} ${__prune} ${__verbosity} ${EL_EXTRAS}
 fi

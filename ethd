@@ -70,6 +70,14 @@ handle_docker_sudo() {
   fi
   set -e
 
+  __docker_version=$(docker --version | awk '{ gsub(/,/, "", $3); print $3 }')
+  __docker_major_version=$(docker --version | awk '{ split($3, version, "."); print version[1]; }')
+  if [ "${__docker_major_version}" -lt 23 ]; then
+    __old_docker=1
+    echo "Docker ${__docker_version} detected"
+  else
+    __old_docker=0
+  fi
   __docker_sudo=""
   if ! docker images >/dev/null 2>&1; then
     echo "Will use sudo to access Docker"
@@ -98,7 +106,7 @@ upgrade_compose() {
   if [[ "$__distro" = "ubuntu" ]]; then
     if [ "${__os_major_version}" -lt 20 ]; then
       echo "${__project_name} cannot update Docker Compose on Ubuntu ${__os_major_version}."
-      echo "Consider upgrading to 20.04 and then 22.04."
+      echo "Consider upgrading to 20.04, then 22.04 and then 24.04."
       exit 1
     fi
     ${__auto_sudo} apt-get update
@@ -116,9 +124,9 @@ upgrade_compose() {
     echo "Removed docker-compose"
   elif [[ "$__distro" =~ "debian" ]]; then
     ${__auto_sudo} apt-get update && ${__auto_sudo} apt-get -y install ca-certificates curl gnupg
-    if [ "${__os_major_version}" -lt 10 ]; then
+    if [ "${__os_major_version}" -lt 11 ]; then
         echo "${__project_name} cannot update Docker Compose on Debian ${__os_major_version}."
-        echo "Consider upgrading to 10, then 11 and then 12."
+        echo "Consider upgrading to 11 and then 12."
         exit 1
     fi
     ${__auto_sudo} mkdir -p /etc/apt/keyrings
@@ -212,7 +220,7 @@ check_for_snap() {
 
 install-bash-completions() {
   if [[ "$OSTYPE" == "darwin"* ]]; then
-    echo "Skipping installation of tab completions (not supported on OSX)"
+    echo "Skipping installation of tab completions (not supported on macOS)"
   else
     if [ ! -f "$(pkg-config --variable=completionsdir bash-completion)/ethd" ]; then
       echo "Installing bash completions for ethd"
@@ -235,7 +243,7 @@ continue? (no/yes) " yn
   if [[ "$__distro" = "ubuntu" ]]; then
     if [ "${__os_major_version}" -lt 20 ]; then
       echo "${__project_name} cannot install Docker on Ubuntu ${__os_major_version}."
-      echo "Consider upgrading to 20.04 and then 22.04."
+      echo "Consider upgrading to 20.04, then 22.04 and then 24.04."
       exit 1
     fi
     if [ -z "$(command -v docker)" ]; then
@@ -267,9 +275,9 @@ continue? (no/yes) " yn
     if [ -z "$(command -v docker)" ]; then
       ${__auto_sudo} apt-get update
       ${__auto_sudo} apt-get -y install ca-certificates curl gnupg whiptail chrony pkg-config
-      if [ "${__os_major_version}" -lt 10 ]; then
+      if [ "${__os_major_version}" -lt 11 ]; then
         echo "${__project_name} cannot install Docker on Debian ${__os_major_version}."
-        echo "Consider upgrading to 10, then 11 and then 12."
+        echo "Consider upgrading to 11 and then 12."
         exit 1
       fi
         ${__auto_sudo} mkdir -p /etc/apt/keyrings
@@ -327,128 +335,131 @@ continue? (no/yes) " yn
 }
 
 
-space() {
-  __docker_dir=$(dodocker system info --format '{{.DockerRootDir}}')
-  __free_space=$(df -P "${__docker_dir}" | awk '/[0-9]%/{print $(NF-2)}')
+__get_docker_free_space() { # set __free_space to what's available to Docker
+  if [[ "$OSTYPE" == "darwin"* ]]; then # macOS doesn't expose docker root dir to the OS
+    __free_space=$(dodocker run --rm -v macos-space-check:/dummy busybox df -P /dummy | awk '/[0-9]%/{print $(NF-2)}')
+  else
+    __docker_dir=$(dodocker system info --format '{{.DockerRootDir}}')
+    __free_space=$(df -P "${__docker_dir}" | awk '/[0-9]%/{print $(NF-2)}')
+  fi
 
   re='^[0-9]+$'
   if ! [[ "${__free_space}" =~ $re ]] ; then
     echo "Unable to determine free disk space. This is likely a bug."
-    echo "df reports $(df -P "${__docker_dir}") and __free_space is ${__free_space}"
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      echo "df reports $(dodocker run --rm -v macos-space-check:/dummy busybox df -P /dummy) and __free_space is ${__free_space}"
+    else
+      echo "df reports $(df -P "${__docker_dir}") and __free_space is ${__free_space}"
+    fi
     exit 70
   fi
-  echo
-  echo "You have $(( __free_space / 1024 / 1024 )) GiB free on ${__docker_dir}"
+}
+
+
+__display_docker_dir() {
+  if [[ "$OSTYPE" == "darwin"* ]]; then # macOS doesn't expose docker root dir to the OS
+    echo "Here's total and used space on Docker's virtual volume"
+    dodocker run --rm -v macos-space-check:/dummy busybox df -h /dummy
+  else
+    echo "Here's total and used space on ${__docker_dir}"
+    df -h "${__docker_dir}"
+  fi
+}
+
+
+__display_docker_volumes() {
   echo
   if [ -z "$(dodocker volume ls -q -f "name=^$(basename "$(realpath .)")_[^_]+")" ]; then
     echo "There are no Docker volumes for this copy of ${__project_name}"
+    echo
   else
     echo "Here are the Docker volumes used by this copy of ${__project_name} and their space usage:"
     dodocker system df -v | grep -A 50 "VOLUME NAME" | grep "^$(basename "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"
+    echo
+    echo "If your Consensus Layer client takes more than 200 GiB, you can resync it with"
+    echo "\"${__me} resync-consensus\"."
+    echo
+  fi
+  echo "If there is some mystery space being taken up, try \"sudo ncdu /\"."
+  echo
+}
+
+
+space() {
+  __get_docker_free_space
+  echo
+  if [[ "$OSTYPE" == "darwin"* ]]; then # macOS doesn't expose docker root dir to the OS
+    echo "You have $(( __free_space / 1024 / 1024 )) GiB free for Docker volumes"
+  else
+    echo "You have $(( __free_space / 1024 / 1024 )) GiB free on ${__docker_dir}"
   fi
   echo
-  echo "Here's the system output for total and used space on ${__docker_dir}"
-  df -h "${__docker_dir}"
-  echo
-  echo "If your Consensys Layer client takes more than 200 GiB of space, you can resync it with"
-  echo "\"${__me} resync-consensus\"."
-  echo
-  echo "If there is some mystery space being taken up, try \"sudo ncdu /\"."
+  __display_docker_dir
+  __display_docker_volumes
 }
+
 
 # Warn user if space is low, so they can prune
 check_disk_space() {
-  __docker_dir=$(dodocker system info --format '{{.DockerRootDir}}')
-  __free_space=$(df -P "${__docker_dir}" | awk '/[0-9]%/{print $(NF-2)}')
-
-  re='^[0-9]+$'
-  if ! [[ "${__free_space}" =~ $re ]] ; then
-    echo "Unable to determine free disk space. This is likely a bug."
-    echo "df reports $(df -P "${__docker_dir}") and __free_space is ${__free_space}"
-    exit 70
-  fi
+  __get_docker_free_space
 
   var="COMPOSE_FILE"
   value=$(sed -n -e "s/^${var}=\(.*\)/\1/p" "${ENV_FILE}" || true)
   var="AUTOPRUNE_NM"
   auto_prune=$(sed -n -e "s/^${var}=\(.*\)/\1/p" "${ENV_FILE}" || true)
+  var="NETWORK"
+  NETWORK=$(sed -n -e "s/^${var}=\(.*\)/\1/p" "${ENV_FILE}" || true)
+
+  if [ "${NETWORK}" = "mainnet" ] || [ "${NETWORK}" = "gnosis" ]; then
+    __min_free=314572800
+    __min_gib=300
+    __safe_prune=250
+  else
+    __min_free=31457280
+    __min_gib=30
+    __safe_prune=25
+  fi
 
 # Literal match intended
 # shellcheck disable=SC2076
-  if [[ "${value}" =~ "nethermind.yml" ]] && [[ "${__free_space}" -lt 314572800 ]]; then
-    echo ""
-    echo "You are running Nethermind and have less than 300 GiB of free disk space."
+  if [[ "${value}" =~ "nethermind.yml" ]] && [[ "${__free_space}" -lt "${__min_free}" ]]; then
+    echo
+    echo "You are running Nethermind and have less than ${__min_gib} GiB of free disk space."
     if [ "${auto_prune}" = true ]; then
       echo "It should currently be auto-pruning, check logs with \"$__me logs -f --tail 500 execution | grep \
 Full\". Free space:"
     else
-      echo "If the below reads above 250 GiB free, prune it with \"$__me prune-nethermind\""
-    fi
-    echo ""
-    df -h "${__docker_dir}"
-    echo ""
-    if [ -z "$(dodocker volume ls -q -f "name=^$(basename "$(realpath .)")_[^_]+")" ]; then
-      echo "There are no Docker volumes for this copy of ${__project_name}"
-      echo
-    else
-      echo "Here are the Docker volumes used by this copy of ${__project_name} and their space usage:"
-      dodocker system df -v | grep -A 50 "VOLUME NAME" | grep "^$(basename "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"
-      echo
-      echo "If your Consensus Layer client takes more than 200 GiB, you can resync it with"
-      echo "\"${__me} resync-consensus\"."
-      echo
+      echo "If the below reads above ${__safe_prune} GiB free, prune it with \"$__me prune-nethermind\""
     fi
     echo
-    echo "If there is some mystery space being taken up, try \"sudo ncdu /\"."
-    echo
+    __display_docker_dir
+    __display_docker_volumes
   elif [[ "${value}" =~ "geth.yml" ]] && [[ "${__free_space}" -lt 104857600 ]]; then
-    echo ""
+    echo
     echo "You are running Geth and have less than 100 GiB of free disk space."
     echo "You may resync from scratch to use PBSS and slow on-disk DB growth, with \"$__me resync-execution\"."
-    echo ""
+    echo
     echo "Alternatively, if you don't feel ready for a resync and have more than 40 GiB free, you can prune \
 with \"$__me prune-geth\"."
-    echo ""
-    df -h "${__docker_dir}"
-    echo ""
-    if [ -z "$(dodocker volume ls -q -f "name=^$(basename "$(realpath .)")_[^_]+")" ]; then
-      echo "There are no Docker volumes for this copy of ${__project_name}"
-      echo
-    else
-      echo "Here are the Docker volumes used by this copy of ${__project_name} and their space usage:"
-      dodocker system df -v | grep -A 50 "VOLUME NAME" | grep "^$(basename "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"
-      echo
-      echo "If your Consensus Layer client takes more than 200 GiB, you can resync it with"
-      echo "\"${__me} resync-consensus\"."
-      echo
-    fi
     echo
-    echo "If there is some mystery space being taken up, try \"sudo ncdu /\"."
+    __display_docker_dir
+    __display_docker_volumes
+  elif [[ "${value}" =~ "besu.yml" ]] && [[ "${__free_space}" -lt 52428800 ]]; then
+    echo
+    echo "You are running Besu and have less than 50 GiB of free disk space."
+    echo
+    echo "If this is a long-running Besu, you may prune trie-logs with \"$__me prune-besu\"."
+    __display_docker_volumes
     echo
   elif [[ "${__free_space}" -lt 52428800 ]]; then
-    echo ""
+    echo
     echo "You have less than 50 GiB of free disk space:"
-    echo ""
-    df -h "${__docker_dir}"
-    echo ""
+    echo
+    __display_docker_dir
+    echo
     echo "Pruning does not appear an option for your client mix."
-    echo "For Besu, consider a resync."
     echo "If total space is less than 1.8 TiB, consider cloning to a larger drive."
-    echo ""
-    if [ -z "$(dodocker volume ls -q -f "name=^$(basename "$(realpath .)")_[^_]+")" ]; then
-      echo "There are no Docker volumes for this copy of ${__project_name}"
-      echo
-    else
-      echo "Here are the Docker volumes used by this copy of ${__project_name} and their space usage:"
-      dodocker system df -v | grep -A 50 "VOLUME NAME" | grep "^$(basename "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"
-      echo
-      echo "If your Consensus Layer client takes more than 200 GiB, you can resync it with"
-      echo "\"${__me} resync-consensus\"."
-      echo
-    fi
-    echo
-    echo "If there is some mystery space being taken up, try \"sudo ncdu /\"."
-    echo
+    __display_docker_volumes
   fi
 }
 
@@ -524,7 +535,7 @@ source_build() {
           docompose build --pull --no-cache consensus
       fi
       ;;
-    *teku.yml* | *teku-cl-only.yml* )
+    *teku.yml* | *teku-allin1.yml* | *teku-cl-only.yml* )
       var="TEKU_DOCKERFILE"
       build=$(sed -n -e "s/^${var}=\(.*\)/\1/p" "${ENV_FILE}" || true)
       if [ "${build}" = "Dockerfile.source" ]; then
@@ -538,7 +549,7 @@ source_build() {
           docompose build --pull --no-cache consensus
       fi
       ;;
-    *nimbus.yml* | *nimbus-cl-only.yml* )
+    *nimbus.yml* | *nimbus-allin1.yml* | *nimbus-cl-only.yml* )
       var="NIM_DOCKERFILE"
       build=$(sed -n -e "s/^${var}=\(.*\)/\1/p" "${ENV_FILE}" || true)
       if [ "${build}" = "Dockerfile.source" ]; then
@@ -560,21 +571,27 @@ migrate_compose_file() {
 # When this gets called $var is COMPOSE_FILE and $value is what is set in .env for it
 # Some files have been renamed and others removed altogether
   FROM_YML=( ec-shared.yml ec-traefik.yml cc-shared.yml grafana-insecure.yml prysm-web-insecure.yml lh-base-notz.yml \
-    lh-validator-notz.yml lh-slasher.yml teku-base-notz.yml teku-validator-notz.yml lh-consensus.yml \
-    lh-validator.yml lodestar-consensus.yml lodestar-validator.yml nimbus-consensus.yml prysm-consensus.yml \
-    prysm-consensus-rest.yml prysm-validator.yml teku-consensus.yml teku-validator.yml lh-base.yml lh-vc-only.yml \
-    lh-cl-only.yml nm.yml lighthouse-base.yml teku-base.yml nimbus-base.yml prysm-base.yml lodestar-base.yml \
-    traefik-cf-v6.yml validator-keyapi-localport.yml consensus-keyapi-localport.yml v6-network.yml nimbus.yml teku.yml \
+    lh-validator-notz.yml teku-base-notz.yml teku-validator-notz.yml lh-consensus.yml lh-validator.yml \
+    lodestar-consensus.yml lodestar-validator.yml nimbus-consensus.yml prysm-consensus.yml prysm-consensus-rest.yml \
+    prysm-validator.yml teku-consensus.yml teku-validator.yml lh-base.yml lh-vc-only.yml lh-cl-only.yml \
+    nm.yml lighthouse-base.yml teku-base.yml nimbus-base.yml prysm-base.yml lodestar-base.yml traefik-cf-v6.yml \
+    validator-keyapi-localport.yml consensus-keyapi-localport.yml v6-network.yml nimbus.yml teku.yml \
+    nimbus-legacy.yml teku-legacy.yml \
     prysm-web.yml blank-grafana.yml lh-grafana.yml lhcc-grafana.yml nimbus-grafana.yml prysm-grafana.yml \
     teku-grafana.yml geth-grafana.yml erigon-grafana.yml oe.yml teku-stats.yml lh-stats.yml lh-stats-consensus.yml \
-    lh-stats-validator.yml traefik-shared.yml lighthouse-slasher.yml prysm-slasher.yml grafana-localhost.yml )
-  TO_YML=( el-shared.yml el-traefik.yml cl-shared.yml grafana-shared.yml prysm-web-shared.yml lighthouse-base.yml \
-    lighthouse-vc-only.yml lighthouse-slasher.yml teku-base.yml teku-vc-only.yml lighthouse-cl-only.yml \
-    lighthouse-vc-only.yml lodestar-cl-only.yml lodestar-vc-only.yml nimbus-cl-only.yml prysm-cl-only.yml \
-    prysm-cl-only.yml prysm-vc-only.yml teku-cl-only.yml teku-vc-only.yml lighthouse-base.yml \
-    lighthouse-vc-only.yml lighthouse-cl-only.yml nethermind.yml lighthouse.yml teku.yml nimbus.yml prysm.yml \
-    lodestar.yml traefik-cf.yml validator-keyapi-shared.yml consensus-keyapi-shared.yml ipv6.yml nimbus-legacy.yml \
-    teku-legacy.yml "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" )
+    lh-stats-validator.yml traefik-shared.yml lh-slasher.yml lighthouse-slasher.yml prysm-slasher.yml \
+    grafana-localhost.yml )
+  TO_YML=( el-shared.yml el-traefik.yml cl-shared.yml grafana-shared.yml prysm-web-shared.yml lighthouse.yml \
+    lighthouse-vc-only.yml teku-allin1.yml teku-vc-only.yml lighthouse-cl-only.yml lighthouse-vc-only.yml \
+    lodestar-cl-only.yml lodestar-vc-only.yml nimbus-cl-only.yml prysm-cl-only.yml prysm-cl-only.yml \
+    prysm-vc-only.yml teku-cl-only.yml teku-vc-only.yml lighthouse.yml lighthouse-vc-only.yml lighthouse-cl-only.yml \
+    nethermind.yml lighthouse.yml teku-allin1.yml nimbus-allin1.yml prysm.yml lodestar.yml traefik-cf.yml \
+    validator-keyapi-shared.yml consensus-keyapi-shared.yml ipv6.yml nimbus-allin1.yml teku-allin1.yml \
+    nimbus-allin1.yml teku-allin1.yml \
+    "" "" "" "" "" "" \
+    "" "" "" "" "" "" "" \
+    "" "" "" "" "" \
+    "" )
 
   __old_grafana=0
   __new_grafana=0
@@ -601,8 +618,8 @@ migrate_compose_file() {
     for index in "${!FROM_YML[@]}"; do
       if [ "${FROM_YML[index]}" = "${__ymlfile}" ]; then
 # ENV version 3 and earlier use the legacy files
-        if [[ "${__ymlfile}" = "nimbus.yml" ]] || [[ "${__ymlfile}" = "teku.yml" ]] \
-            && [[ -n "${__source_ver}" ]] && [[ "${__source_ver}" -gt 3 ]]; then
+        if [[ "${__ymlfile}" = "nimbus.yml" || "${__ymlfile}" = "teku.yml" ]] \
+            && [[ -n "${__source_ver:-}" && "${__source_ver}" -gt 3 ]]; then
           break
         else
           __ymlfile=${TO_YML[index]}
@@ -667,6 +684,59 @@ ssv_switch() {
 }
 
 
+delete_reth() {
+# Enable this when Reth changes DB
+  if true; then
+    return 0
+  fi
+# Check for Reth
+  var="COMPOSE_FILE"
+  value=$(sed -n -e "s/^${var}=\(.*\)/\1/p" "${ENV_FILE}" || true)
+# I do mean to match literally
+# shellcheck disable=SC2076
+  if [[ ! "${value}" =~ "reth.yml" ]]; then
+    return 0
+  fi
+
+# Check Reth version, only continue if on that version
+  var="RETH_DOCKER_TAG"
+  value=$(sed -n -e "s/^${var}=\(.*\)/\1/p" "${ENV_FILE}" || true)
+# I do mean to match literally
+# shellcheck disable=SC2076
+  if [[ ! ("${value}" =~ "beta" || "${value}" = "latest") ]]; then
+    return 0
+  fi
+
+  if [ -z "$(dodocker volume ls -q -f "name=reth-el-data")" ]; then # No Reth volume
+    return 0
+  fi
+
+# Check Reth db version
+  __db_version="$(dodocker run --rm -v "$(dodocker volume ls -q -f "name=reth-el-data")":"/var/lib/reth" \
+      alpine:3 cat /var/lib/reth/db/database.version)"
+  if [ "${__db_version}" -ne "1" ]; then
+    return 0
+  fi
+
+  echo "Detected Reth. For Reth beta, it will need to be re-synced from scratch."
+  echo
+  while true; do
+    read -rp "WARNING - About to delete the Reth database. Do you wish to continue? (Y/n) " yn
+    case $yn in
+      [Nn]o | [Nn]  ) echo "Aborting, no changes made"; exit 130;;
+      * ) break;;
+    esac
+  done
+
+  echo "Stopping Reth container"
+  docompose stop execution && docompose rm -f execution
+  dodocker volume rm "$(dodocker volume ls -q -f "name=reth-el-data")"
+  echo
+  echo "Reth stopped and database deleted."
+  echo
+}
+
+
 delete_erigon() {
 # Check for Erigon
   var="COMPOSE_FILE"
@@ -702,9 +772,6 @@ delete_erigon() {
 
 
 upgrade_postgres() {
-# Enable this when ready
-  return
-
   # Check for web3signer
   var="COMPOSE_FILE"
   value=$(sed -n -e "s/^${var}=\(.*\)/\1/p" "${ENV_FILE}" || true)
@@ -751,22 +818,14 @@ upgrade_postgres() {
     return 70
   fi
 
-  __docker_dir=$(dodocker system info --format '{{.DockerRootDir}}')
-  __free_space=$(df -P "${__docker_dir}" | awk '/[0-9]%/{print $(NF-2)}')
-
-  re='^[0-9]+$'
-  if ! [[ "${__free_space}" =~ $re ]] ; then
-    echo "Unable to determine free disk space. This is likely a bug."
-    echo "df reports $(df -P "${__docker_dir}") and __free_space is ${__free_space}"
-    return 70
-  fi
+  __get_docker_free_space
 
   if [[ "${__free_space}" -lt $(( (__source_size * 2) + 10485760 )) ]]; then
     echo
     echo "You don't have enough space free to migrate the database."
     echo "It is $(( __source_size / 1024 / 1024 )) GiB in size and you need twice as much free again."
     echo
-    df -h "${__docker_dir}"
+    __display_docker_dir
     echo
     return
   fi
@@ -836,6 +895,46 @@ upgrade_postgres() {
 }
 
 
+__lookup_cf_zone() { # Migrates traefik-cf setup to use Zone ID
+  __compose_ymls=$(sed -n -e "s/^COMPOSE_FILE=\(.*\)/\1/p" "${ENV_FILE}.source" || true)
+  __dns_token=$(sed -n -e "s/^CF_DNS_API_TOKEN=\(.*\)/\1/p" "${ENV_FILE}.source" || true)
+  __zone_token=$(sed -n -e "s/^CF_ZONE_API_TOKEN=\(.*\)/\1/p" "${ENV_FILE}.source" || true)
+  __domain=$(sed -n -e "s/^DOMAIN=\(.*\)/\1/p" "${ENV_FILE}.source" || true)
+  if [[ ! $__compose_ymls =~ traefik-cf.yml ]]; then
+    value=""
+    return
+  elif [[ -n $__dns_token ]]; then
+    if [[ -n $__zone_token ]]; then
+      __token=$__zone_token
+    else
+      __token=$__dns_token
+    fi
+    set +e
+    value=$(docompose run --rm curl-jq sh -c \
+      "curl -s \"https://api.cloudflare.com/client/v4/zones?name=${__domain}\" -H \"Authorization: Bearer ${__token}\" \
+      -H \"Content-Type: application/json\" | jq -r '.result[0].id'" | tail -n 1)
+    __code=$?
+    if [[ "$__code" -ne 0 ]]; then
+      value=""
+      return
+    fi
+    __success=$(docompose run --rm curl-jq sh -c \
+      "curl -s \"https://api.cloudflare.com/client/v4/zones?name=${__domain}\" -H \"Authorization: Bearer ${__token}\" \
+      -H \"Content-Type: application/json\" | jq -r '.success'" | tail -n 1)
+    set -e
+    if [ "${__success}" = "true" ]; then
+      return
+    else
+      value=""
+      return
+    fi
+  else
+    value=""
+    return
+  fi
+}
+
+
 # envmigrate used to be called w/ arguments and checks for that
 # shellcheck disable=SC2120
 envmigrate() {
@@ -866,7 +965,7 @@ envmigrate() {
   fi
 
   ALL_VARS=( COMPOSE_FILE FEE_RECIPIENT WITHDRAWAL_CREDENTIALS EL_NODE GRAFFITI DEFAULT_GRAFFITI NETWORK MEV_BOOST MEV_RELAYS MEV_MIN_BID \
-    MEV_NODE CL_MAX_PEER_COUNT CL_MIN_PEER_COUNT EL_MAX_PEER_COUNT EL_MIN_PEER_COUNT DOMAIN ACME_EMAIL \
+    MEV_NODE CL_MAX_PEER_COUNT CL_MIN_PEER_COUNT EL_MAX_PEER_COUNT EL_MIN_PEER_COUNT DOMAIN ACME_EMAIL ANCIENT_DIR \
     AUTOPRUNE_NM LOGS_LABEL CF_DNS_API_TOKEN CF_ZONE_API_TOKEN CF_ZONE_ID AWS_PROFILE AWS_HOSTED_ZONE_ID \
     GRAFANA_HOST SIREN_HOST DISTRIBUTED BESU_HEAP TEKU_HEAP PROM_HOST HOST_IP SHARE_IP PRYSM_HOST EE_HOST \
     EL_HOST EL_LB EL_WS_HOST EL_WS_LB CL_HOST CL_LB VC_HOST DDNS_SUBDOMAIN IPV6 DDNS_PROXY RAPID_SYNC_URL \
@@ -923,7 +1022,7 @@ NEW_VARS=( CL_P2P_PORT KEY_API_PORT EL_NODE FEE_RECIPIENT EL_EXTRAS CF_DNS_API_T
 # Literal match intended
 # shellcheck disable=SC2076
   if [[ "${value}" =~ "blox-ssv2.yml" ]]; then
-     ssv_switch
+   ssv_switch
   fi
 
   # Migrate over user settings
@@ -944,6 +1043,11 @@ NEW_VARS=( CL_P2P_PORT KEY_API_PORT EL_NODE FEE_RECIPIENT EL_EXTRAS CF_DNS_API_T
       if [[ "${var}" = "NETWORK" && "${value}" =~ "prater" ]]; then
         value="goerli"
       fi
+# Literal match intended
+# shellcheck disable=SC2076
+      if [[ "${var}" = "RAPID_SYNC_URL" && "${value}" =~ "eth2-beacon-mainnet.infura.io" ]]; then
+        value="https://beaconstate.info"
+      fi
       if [[ "${var}" = "HOST_IP" && "${value: -1}" != ":" ]]; then
         value="${value}:" # ComposeV1 requires this so I can do v6
       fi
@@ -952,6 +1056,13 @@ NEW_VARS=( CL_P2P_PORT KEY_API_PORT EL_NODE FEE_RECIPIENT EL_EXTRAS CF_DNS_API_T
       fi
       # Handle & in GRAFFITI gracefully
       sed -i'.original' -e "s~^\(${var}\s*=\s*\).*\$~\1${value//&/\\&}~" "${ENV_FILE}"
+    else # empty value
+      if [ "${var}" = "CF_ZONE_ID" ]; then
+        __lookup_cf_zone
+        if [ -n "${value}" ]; then
+          sed -i'.original' -e "s~^\(${var}\s*=\s*\).*\$~\1${value//&/\\&}~" "${ENV_FILE}"
+        fi
+      fi
     fi
   done
   if [ "${__keep_targets}" -eq 1 ]; then
@@ -959,6 +1070,9 @@ NEW_VARS=( CL_P2P_PORT KEY_API_PORT EL_NODE FEE_RECIPIENT EL_EXTRAS CF_DNS_API_T
     for var in "${TARGET_VARS[@]}"; do
       value=$(sed -n -e "s/^${var}=\(.*\)/\1/p" "${ENV_FILE}.source" || true)
       if [ -n "${value}" ]; then
+        if [[ "${var}" = "DDNS_TAG" && "${__source_ver}" -lt "8" ]]; then # Switch to ddns-updater
+          value="v2"
+        fi
         sed -i'.original' -e "s~^\(${var}\s*=\s*\).*$~\1${value}~" "${ENV_FILE}"
       fi
     done
@@ -979,7 +1093,7 @@ NEW_VARS=( CL_P2P_PORT KEY_API_PORT EL_NODE FEE_RECIPIENT EL_EXTRAS CF_DNS_API_T
 # shellcheck disable=SC2076
   if [[ "${value}" =~ "prysm.yml" || "${value}" =~ "lighthouse.yml" || "${value}" =~ "teku.yml" \
     || "${value}" =~ "nimbus.yml" || "${value}" =~ "lodestar.yml" || "${value}" =~ "-cl-only.yml" \
-    || "${value}" =~ "-vc-only.yml" ]]; then
+    || "${value}" =~ "-allin1.yml" || "${value}" =~ "-vc-only.yml" ]]; then
     # Check for rewards
     var="FEE_RECIPIENT"
     value=$(sed -n -e "s/^${var}=\(.*\)/\1/p" "${ENV_FILE}" || true)
@@ -1016,7 +1130,7 @@ NEW_VARS=( CL_P2P_PORT KEY_API_PORT EL_NODE FEE_RECIPIENT EL_EXTRAS CF_DNS_API_T
 # shellcheck disable=SC2076
   if [[ "${value}" =~ "prysm.yml" || "${value}" =~ "lighthouse.yml" || "${value}" =~ "teku.yml" \
     || "${value}" =~ "nimbus.yml" || "${value}" =~ "lodestar.yml" || "${value}" =~ "-cl-only.yml" \
-    || "${value}" =~ "-legacy.yml" ]]; then
+    || "${value}" =~ "-allin1.yml" ]]; then
     if [[ ! "${value}" =~ "geth.yml" && ! "${value}" =~ "besu.yml" && ! "${value}" =~ "erigon.yml" \
       && ! "${value}" =~ "nethermind.yml"  && ! "${value}" =~ "nimbus-el.yml" \
       && ! "${value}" =~ "reth.yml" ]]; then
@@ -1029,7 +1143,7 @@ ${ENV_FILE}" 12 75
     || "${value}" =~ "nethermind.yml" || "${value}" =~ "nimbus-el.yml" || "${value}" =~ "reth.yml" ]]; then
     if [[ ! "${value}" =~ "prysm.yml"  && ! "${value}" =~ "lighthouse.yml"  && ! "${value}" =~ "teku.yml"  \
       && ! "${value}" =~ "nimbus.yml"  && ! "${value}" =~ "lodestar.yml"  && ! "${value}" =~ "-cl-only.yml" \
-      && ! "${value}" =~ "-legacy.yml" ]]; then
+      && ! "${value}" =~ "-allin1.yml" ]]; then
       whiptail --msgbox "A Consensus Layer client is required alongside your Execution Layer client since \
 Ethereum Merge.\n\nIf you run a distributed setup, you can shut off this nag screen by setting DISTRIBUTED=true in \
 ${ENV_FILE}" 12 75
@@ -1054,6 +1168,7 @@ ${ENV_FILE}" 12 75
     set_value_in_env
      __el_adjusted=1
   fi
+
   ${__as_owner} rm "${ENV_FILE}".original
   __during_migrate=0
   echo "${ENV_FILE} updated successfully"
@@ -1064,15 +1179,15 @@ nag_os_version() {
   if [[ "$__distro" = "ubuntu" ]]; then
     if [ "${__os_major_version}" -lt 20 ]; then
      echo
-     echo "Ubuntu ${__os_major_version} is older than the recommended 22.04 or 20.04 version."
+     echo "Ubuntu ${__os_major_version} is older than the recommended 24.04, 22.04 or 20.04 version."
      echo
     fi
   fi
 
   if [[ "$__distro" =~ "debian" ]]; then
-    if [ "${__os_major_version}" -lt 10 ]; then
+    if [ "${__os_major_version}" -lt 11 ]; then
      echo
-     echo "Debian ${__os_major_version} is older than the recommended 10, 11 or 12 version."
+     echo "Debian ${__os_major_version} is older than the recommended 12 or 11 version."
      echo
     fi
   fi
@@ -1115,16 +1230,9 @@ update() {
     exit 1
   fi
 
-  __docker_dir=$(dodocker system info --format '{{.DockerRootDir}}')
-  __free_space=$(df -P "${__docker_dir}" | awk '/[0-9]%/{print $(NF-2)}')
-
-  re='^[0-9]+$'
-  if ! [[ "${__free_space}" =~ $re ]] ; then
-    echo "Unable to determine free disk space. This is likely a bug."
-    echo "df reports $(df -P "${__docker_dir}") and __free_space is ${__free_space}"
-    exit 70
-  elif [ "${__free_space}" -lt 1048576 ]; then
-    echo "You have less than 1 GiB of space left on ${__docker_dir}."
+  __get_docker_free_space
+  if [ "${__free_space}" -lt 1048576 ]; then
+    echo "You have less than 1 GiB of space left for Docker volumes."
     echo "Aborting, as an update is not safe."
     exit 1
   fi
@@ -1149,8 +1257,11 @@ update() {
     value=$(sed -n -e "s/^${var}=\(.*\)/\1/p" "${ENV_FILE}" || true)
     if [ -z "${value}" ] || [ "${value}" = "latest" ]; then
       export ETHDPINNED=""
-      ${__as_owner} git checkout main
-      ${__as_owner} git pull
+      __branch=$(git rev-parse --abbrev-ref HEAD)
+      if [[ "${__branch}" =~ ^tag-v[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        git checkout main
+      fi
+      ${__as_owner} git pull origin main
     else
       export ETHDPINNED="${value}"
       ${__as_owner} git fetch --tags
@@ -1196,7 +1307,7 @@ update() {
         ;;
       *)
         echo "Error: Unknown option: $1" >&2
-        exit 1
+        shift
         ;;
     esac
   done
@@ -1218,6 +1329,7 @@ update() {
   pull_and_build
 
   delete_erigon
+  delete_reth
   upgrade_postgres
 
   echo
@@ -1342,6 +1454,7 @@ resync-execution() {
     * ) echo "Aborting."; exit 130;;
   esac
 
+  __el_volume="$(basename "$(realpath .)")_${__el_volume}"
   echo "Stopping ${__el_client} container"
   docompose stop execution && docompose rm -f execution
   dodocker volume rm "$(dodocker volume ls -q -f "name=${__el_volume}")"
@@ -1361,9 +1474,9 @@ resync-consensus() {
   case "${value}" in
     *lighthouse.yml* ) __cl_volume='lhbeacon-data'; __cl_client="lighthouse";;
     *lighthouse-cl-only.yml* ) __cl_volume='lhconsensus-data'; __cl_client="lighthouse";;
-    *teku-legacy.yml* ) __cl_volume='wipe-db'; __cl_client="teku";;
+    *teku-allin1.yml* ) __cl_volume='wipe-db'; __cl_client="teku";;
     *teku.yml* | *teku-cl-only.yml* ) __cl_volume='tekuconsensus-data'; __cl_client="teku";;
-    *nimbus-legacy.yml* ) __cl_volume='wipe-db'; __cl_client="nimbus";;
+    *nimbus-allin1.yml* ) __cl_volume='wipe-db'; __cl_client="nimbus";;
     *nimbus.yml* | *nimbus-cl-only.yml* ) __cl_volume='nimbus-consensus-data'; __cl_client="nimbus";;
     *lodestar.yml* | *lodestar-cl-only.yml* ) __cl_volume='lsconsensus-data'; __cl_client="lodestar";;
     *prysm.yml* ) __cl_volume='prysmbeacon-data'; __cl_client="prysm";;
@@ -1391,6 +1504,7 @@ resync-consensus() {
     * ) echo "Aborting."; exit 130;;
   esac
 
+  __cl_volume="$(basename "$(realpath .)")_${__cl_volume}"
   echo "Stopping ${__cl_client} container"
   docompose stop consensus && docompose rm -f consensus
   if [ "${__cl_volume}" = "wipe-db" ]; then
@@ -1461,20 +1575,12 @@ prune-geth() {
     exit 1
   fi
 
-  __docker_dir=$(dodocker system info --format '{{.DockerRootDir}}')
-  __free_space=$(df -P "${__docker_dir}" | awk '/[0-9]%/{print $(NF-2)}')
-
-  re='^[0-9]+$'
-  if ! [[ "${__free_space}" =~ $re ]] ; then
-    echo "Unable to determine free disk space. This is likely a bug."
-    echo "df reports $(df -P "${__docker_dir}") and __free_space is ${__free_space}"
-    exit 70
-  fi
+  __get_docker_free_space
 
   if [ "${__free_space}" -lt 41943040 ]; then
     echo "You do not have enough free disk space. Make sure this reads at least 40G free (Avail):"
-    df -h "${__docker_dir}"
-    echo ""
+    __display_docker_dir
+    echo
     echo "Aborting."
     exit 1
   fi
@@ -1527,7 +1633,7 @@ prune-geth() {
   if [ $__non_interactive = 0 ]; then
     echo "Geth PBSS is available. Consider answering \"No\" and using \"$__me resync-execution\" instead of prune."
     echo "PBSS continually prunes, making manual pruning runs a thing of the past."
-    echo ""
+    echo
     while true; do
       read -rp "WARNING - this will stop Geth and prune its database. Do you wish to continue? (No/Yes) " yn
       case $yn in
@@ -1537,20 +1643,118 @@ prune-geth() {
     done
   fi
 
-  echo ""
+  echo
   echo "Starting Geth prune"
-  echo ""
+  echo
   docompose run --rm set-prune-marker "touch /var/lib/goethereum/prune-marker"
   docompose stop execution && docompose rm -f execution
   start
-  echo ""
+  echo
   echo "Prune is running, you can observe it with '$__me logs -f execution'"
-  echo ""
+  echo
   echo "There should be three stages: \"Iterating state snapshot\", \"Pruning state data\", and \"Compacting \
 database\". During the \"Compacting database\" stage it may not output logs for an hour or so, that is normal."
-  echo ""
+  echo
   echo "When prune is done, which takes 4-5 hours, Geth will automatically start again."
-  echo ""
+  echo
+}
+
+
+prune-besu() {
+# Needs to be in a release first
+  echo "Trie log pruning is not yet in a released Besu version. Aborting."
+  if true; then
+    return 0
+  fi
+  __non_interactive=0
+  while :
+  do
+    if [ -z "${1+x}" ]; then
+      break
+    fi
+    case "$1" in
+      --non-interactive)
+        __non_interactive=1
+        shift
+        ;;
+      *)
+        echo "Error: Unknown option: $1" >&2
+        exit 1
+        ;;
+    esac
+  done
+  if [ "${ETHD_FRONTEND:-}" = "noninteractive" ]; then
+    __non_interactive=1
+  fi
+
+  if [ ! -f "${ENV_FILE}" ]; then
+    echo "${ENV_FILE} configuration file not found, aborting."
+    exit 1
+  fi
+
+  if ! grep -q '^COMPOSE_FILE=.*besu\.yml' "${ENV_FILE}" 2>/dev/null ; then
+    echo "You do not appear to be using Besu, aborting."
+    exit 1
+  fi
+
+  # Check for archive node
+  var="ARCHIVE_NODE"
+  value=$(sed -n -e "s/^${var}=\(.*\)/\1/p" "${ENV_FILE}" || true)
+  if [[ "${value}" = "true" ]]; then
+    echo "Besu is an archive node: Aborting."
+    exit 1
+  fi
+
+  rpc_line=$(grep '^EL_RPC_PORT=' "${ENV_FILE}")
+  regex='^EL_RPC_PORT=([0-9]+)'
+  if [[ ! "${rpc_line}" =~ ${regex} ]]; then
+    echo "Unable to determine EL_RPC_PORT, aborting."
+    exit 1
+  else
+    rpc_port="${BASH_REMATCH[1]}"
+  fi
+
+  set +e
+  sync_status=$(docompose exec -T execution wget -qO- "http://localhost:$rpc_port" \
+  --header 'Content-Type: application/json' --post-data '{"jsonrpc":"2.0","method":"eth_syncing","params":[],"id":1}')
+  exitstatus=$?
+  set -e
+  if [ $exitstatus -ne 0 ]; then
+    echo "Unable to connect to Besu: Is it running?"
+    echo "Output: ${sync_status}"
+    echo "Aborting."
+    exit 1
+  fi
+
+  if [[ ! "${sync_status}" =~ "false" ]]; then
+    echo "Besu is not done syncing yet. Sync status:"
+    echo "${sync_status}"
+    echo
+    echo "Aborting."
+    exit 1
+  fi
+
+  if [ $__non_interactive = 0 ]; then
+    while true; do
+      read -rp "WARNING - this will stop Besu and prune its trie-logs. Do you wish to continue? (No/Yes) " yn
+      case $yn in
+        [Yy][Ee][Ss] ) break;;
+        * ) echo "Aborting, no changes made"; exit 130;;
+      esac
+    done
+  fi
+
+  echo
+  echo "Starting Besu prune"
+  echo
+  docompose run --rm set-prune-marker "touch /var/lib/besu/prune-marker"
+  docompose stop execution && docompose rm -f execution
+  start
+  echo
+  echo "Prune is running, you can observe it with '$__me logs -f execution'"
+  echo
+  echo "When prune is done, Besu will automatically start again."
+  echo
 }
 
 
@@ -1594,19 +1798,23 @@ prune-nethermind() {
     exit 1
   fi
 
-  __docker_dir=$(dodocker system info --format '{{.DockerRootDir}}')
-  __free_space=$(df -P "${__docker_dir}" | awk '/[0-9]%/{print $(NF-2)}')
+  __get_docker_free_space
 
-  re='^[0-9]+$'
-  if ! [[ "${__free_space}" =~ $re ]] ; then
-    echo "Unable to determine free disk space. This is likely a bug."
-    echo "df reports $(df -P "${__docker_dir}") and __free_space is ${__free_space}"
-    exit 70
+  var="NETWORK"
+  NETWORK=$(sed -n -e "s/^${var}=\(.*\)/\1/p" "${ENV_FILE}" || true)
+
+  if [ "${NETWORK}" = "mainnet" ] || [ "${NETWORK}" = "gnosis" ]; then
+    __min_free=262144000
+    __min_gib=250
+  else
+    __min_free=26214400
+    __min_gib=25
   fi
 
-  if [ "${__free_space}" -lt 262144000 ]; then
-    echo "You do not have enough free disk space. Make sure this reads at least 250G free (Avail):"
-    df -h "${__docker_dir}"
+  if [ "${__free_space}" -lt ${__min_free} ]; then
+    echo "You do not have enough free disk space. Make sure this reads at least ${__min_gib}G free (Avail):"
+    echo
+    __display_docker_dir
     echo
     echo "Aborting."
     exit 1
@@ -1647,7 +1855,12 @@ prune-nethermind() {
   if [ $__non_interactive = 0 ]; then
     while true; do
       if [ "${auto_prune}" = true ]; then
-        echo "Nethermind should auto-prune below 350 GiB free. Check logs with \"$__me logs -f --tail 500 \
+        if [ "${NETWORK}" = "mainnet" ] || [ "${NETWORK}" = "gnosis" ]; then
+          threshold="350"
+        else
+          threshold="50"
+        fi
+        echo "Nethermind should auto-prune below ${threshold} GiB free. Check logs with \"$__me logs -f --tail 500 \
 execution | grep Full\" to see whether it is."
       fi
       read -rp "WARNING - this will prune Nethermind's database in the background. Do you wish to continue? (No/Yes) " yn
@@ -1658,9 +1871,9 @@ execution | grep Full\" to see whether it is."
     done
   fi
 
-  echo ""
+  echo
   echo "Starting Nethermind prune"
-  echo ""
+  echo
 
   set +e
   prune_result=$(docompose exec -T execution wget -qO- "http://localhost:1337" --header \
@@ -1670,13 +1883,14 @@ execution | grep Full\" to see whether it is."
   if [ $exitstatus -ne 0 ]; then
     echo "Unable to start prune, error code ${exitstatus}. This is likely a bug."
     echo "An attempt to run it returned this: ${prune_result}"
+    # shellcheck disable=SC2028
     echo 'The command attempted was: docker compose run --rm set-prune-marker "curl -s \
 --data {\\\"method\\\":\\\"admin_prune\\\",\\\"params\\\":[],\\\"id\\\":1,\\\"jsonrpc\\\":\\\"2.0\\\"} \
 -H Content-Type:\ application/json http://execution:8545"'
     exit ${exitstatus}
   fi
   echo "Nethermind returns ${prune_result}"
-  if [[ ! "${prune_result}" =~ "Starting" ]]; then
+  if [[ ! "${prune_result}" =~ [Ss]tarting ]]; then
     echo "Unable to start prune. This is likely a bug."
     exit 70
   fi
@@ -1686,6 +1900,102 @@ execution | grep Full\" to see whether it is."
   echo "Please do not restart the node or restart Nethermind until prune is done."
   echo
   echo "When prune is done, Nethermind will automatically re-start."
+  echo
+}
+
+
+prune-lighthouse() {
+  __non_interactive=0
+  while :
+  do
+    if [ -z "${1+x}" ]; then
+      break
+    fi
+    case "$1" in
+      --non-interactive)
+        __non_interactive=1
+        shift
+        ;;
+      *)
+        echo "Error: Unknown option: $1" >&2
+        exit 1
+        ;;
+    esac
+  done
+  if [ "${ETHD_FRONTEND:-}" = "noninteractive" ]; then
+    __non_interactive=1
+  fi
+
+  if [ ! -f "${ENV_FILE}" ]; then
+    echo "${ENV_FILE} configuration file not found, aborting."
+    exit 1
+  fi
+
+  var="COMPOSE_FILE"
+  value=$(sed -n -e "s/^${var}=\(.*\)/\1/p" "${ENV_FILE}" || true)
+# Literal match intended
+# shellcheck disable=SC2076
+  if [[ ! "${value}" =~ "lighthouse.yml" && ! "${value}" =~ "lighthouse-cl-only.yml" ]]; then
+    echo "You do not appear to be using Lighthouse, aborting."
+    exit 1
+  fi
+
+  # Check for archive node
+  var="ARCHIVE_NODE"
+  value=$(sed -n -e "s/^${var}=\(.*\)/\1/p" "${ENV_FILE}" || true)
+  if [[ "${value}" = "true" ]]; then
+    echo "Lighthouse is an archive node: Aborting."
+    exit 1
+  fi
+
+  rpc_line=$(grep '^CL_REST_PORT=' "${ENV_FILE}")
+  regex='^CL_REST_PORT=([0-9]+)'
+  if [[ ! "${rpc_line}" =~ ${regex} ]]; then
+    echo "Unable to determine CL_REST_PORT, aborting."
+    exit 1
+  else
+    rpc_port="${BASH_REMATCH[1]}"
+  fi
+
+  set +e
+  sync_status=$(docompose exec -T consensus wget -qO- "http://localhost:$rpc_port/eth/v1/node/syncing")
+  exitstatus=$?
+  set -e
+  if [ $exitstatus -ne 0 ]; then
+    echo "Unable to connect to Lighthouse: Is it running?"
+    echo "Output: ${sync_status}"
+    echo "Aborting."
+    exit 1
+  fi
+
+  if [[ "${sync_status}" =~ "true" ]]; then # Avoid jq - if el_offline or is_optimistic or is_syncing, don't proceed
+    echo "Lighthouse is not done syncing yet. Sync status:"
+    echo "${sync_status}"
+    echo
+    echo "Aborting."
+    exit 1
+  fi
+
+  if [ $__non_interactive = 0 ]; then
+    while true; do
+      read -rp "WARNING - this will stop Lighthouse and prune its state. Do you wish to continue? (No/Yes) " yn
+      case $yn in
+        [Yy][Ee][Ss] ) break;;
+        * ) echo "Aborting, no changes made"; exit 130;;
+      esac
+    done
+  fi
+
+  echo
+  echo "Starting Lighthouse prune"
+  echo
+  docompose run --rm set-cl-prune-marker "touch /var/lib/lighthouse/beacon/prune-marker"
+  docompose stop consensus && docompose rm -f consensus
+  start
+  echo
+  echo "Prune is running, you can observe it with '$__me logs -f consensus'"
+  echo
+  echo "When prune is done, Lighthouse will automatically start again."
   echo
 }
 
@@ -1701,7 +2011,8 @@ prep-keyimport() {
 # Literal match intended
 # shellcheck disable=SC2076
   if [[ ! "${value}" =~ "prysm.yml" ]] && [[ ! "${value}" =~ "lighthouse.yml" ]] && [[ ! "${value}" =~ "teku.yml" ]] \
-       && [[ ! "${value}" =~ "nimbus.yml" ]] && [[ ! "${value}" =~ "lodestar.yml" ]] && [[ ! "${value}" =~ "vc-only.yml" ]]; then
+       && [[ ! "${value}" =~ "nimbus.yml" ]] && [[ ! "${value}" =~ "lodestar.yml" ]] && \
+       [[ ! "${value}" =~ "-allin1.yml" ]] && [[ ! "${value}" =~ "vc-only.yml" ]]; then
     echo "You do not appear to be running a validator client. Aborting."
     exit 1
   fi
@@ -1866,7 +2177,8 @@ __keys_usage() {
   echo "      in slashing_protection*.json files that match the public key(s) of the imported validator(s)"
   echo "  delete 0xPUBKEY | all"
   echo "      Deletes the validator with public key 0xPUBKEY from the validator client, and exports its"
-  echo "      slashing protection database. \"all\" deletes all detected validators instead"
+  echo "      slashing protection database."
+  echo "      \"all\" deletes all detected validators."
   echo "  register"
   echo "      For use with web3signer only: Re-register all keys in web3signer with the validator client"
   echo
@@ -1886,6 +2198,14 @@ __keys_usage() {
   echo "  delete-gas 0xPUBKEY"
   echo "      Delete individual execution gas limit for the validator with public key 0xPUBKEY"
   echo
+  echo "  get-graffiti 0xPUBKEY"
+  echo "      List graffiti set for the validator with public key 0xPUBKEY"
+  echo "      Validators will use GRAFFITI in .env by default, if not set individually"
+  echo "  set-graffiti 0xPUBKEY amount"
+  echo "      Set individual graffiti for the validator with public key 0xPUBKEY"
+  echo "  delete-graffiti 0xPUBKEY"
+  echo "      Delete individual graffiti for the validator with public key 0xPUBKEY"
+  echo
   echo "  get-api-token"
   echo "      Print the token for the keymanager API running on port ${KEY_API_PORT:-7500}."
   echo "      This is also the token for the Prysm Web UI"
@@ -1900,12 +2220,15 @@ __keys_usage() {
   echo "  send-address-change"
   echo "      Send a change-operations.json with ethdo, setting the withdrawal address"
   echo
-  echo "  sign-exit 0xPUBKEY"
+  echo "  sign-exit 0xPUBKEY | all"
   echo "      Create pre-signed exit message for the validator with public key 0xPUBKEY"
+  echo "      \"all\" signs an exit message for all detected validators"
   echo "  sign-exit from-keystore [--offline]"
   echo "      Create pre-signed exit messages with ethdo, from keystore files in ./.eth/validator_keys"
   echo "  send-exit"
   echo "      Send pre-signed exit messages in ./.eth/exit_messages to the Ethereum chain"
+  echo
+  echo " Commands can be appended with \"--debug\" to see debug output"
 }
 
 
@@ -2071,6 +2394,7 @@ keys() {
       exitstatus=$?
       if [ "${exitstatus}" -eq 0 ]; then
         echo "${__json}" >".eth/exit_messages/${__pubkey::10}--${__pubkey:90}-exit.json"
+# shellcheck disable=SC2320
         exitstatus=$?
         if [ "${exitstatus}" -eq 0 ]; then
           echo "Creating an exit message for validator ${__pubkey} into file \
@@ -2224,6 +2548,8 @@ terminate() {
 
 
 query_network() {
+  var="NETWORK"
+  __prev_network=$(sed -n -e "s/^${var}=\(.*\)/\1/p" "${ENV_FILE}" || true)
   NETWORK=$(whiptail --notags --title "Select Network" --menu \
   "Which network do you want to run on?" 13 65 6 \
   "holesky" "Holešovice Testnet" \
@@ -2257,39 +2583,45 @@ screen.\n\nCustom testnets only work with a URL to fetch their configuration fro
       done
       ;;
   esac
+  if [ ! "${NETWORK}" = "${__prev_network}" ]; then
+    __network_change=1
+  else
+    __network_change=0
+  fi
 }
 
 
 query_deployment() {
-    if [ "${NETWORK}" = "gnosis" ]; then
-      __deployment=$(whiptail --notags --title "Select deployment type" --menu \
-      "What kind of deployment do you want to run?" 9 65 2 \
-      "node" "Ethereum node - consensus, execution and validator client" \
-      "rpc" "Ethereum RPC node - consensus and execution client" 3>&1 1>&2 2>&3)
-    elif uname -a | grep -q aarch64; then
-      __deployment=$(whiptail --notags --title "Select deployment type" --menu \
-      "What kind of deployment do you want to run?" 10 65 4 \
-      "node" "Ethereum node - consensus, execution and validator client" \
-      "lido_comp" "Lido-compatible node (Community Staking / Simple DVT)" \
-      "rocket" "Validator client only - integrate with RocketPool" \
-      "rpc" "Ethereum RPC node - consensus and execution client" 3>&1 1>&2 2>&3)
-    else
-      __deployment=$(whiptail --notags --title "Select deployment type" --menu \
-      "What kind of deployment do you want to run?" 11 65 5 \
-      "node" "Ethereum node - consensus, execution and validator client" \
-      "lido_comp" "Lido-compatible node (Community Staking / Simple DVT)" \
-      "rocket" "Validator client only - integrate with RocketPool" \
-      "ssv" "SSV node - consensus, execution and ssv-node" \
-      "rpc" "Ethereum RPC node - consensus and execution client" 3>&1 1>&2 2>&3)
-    fi
+  if [ "${NETWORK}" = "gnosis" ]; then
+    __deployment=$(whiptail --notags --title "Select deployment type" --menu \
+    "What kind of deployment do you want to run?" 10 65 3 \
+    "node" "Ethereum node - consensus, execution and validator client" \
+    "rpc" "Ethereum RPC node - consensus and execution client" \
+    "validator" "Validator client only" 3>&1 1>&2 2>&3)
+  elif uname -a | grep -q aarch64; then
+    __deployment=$(whiptail --notags --title "Select deployment type" --menu \
+    "What kind of deployment do you want to run?" 10 65 4 \
+    "node" "Ethereum node - consensus, execution and validator client" \
+    "rpc" "Ethereum RPC node - consensus and execution client" \
+    "lido_comp" "Lido-compatible node (Community Staking / Simple DVT)" \
+    "rocket" "Validator client only - integrate with RocketPool" 3>&1 1>&2 2>&3)
+  else
+    __deployment=$(whiptail --notags --title "Select deployment type" --menu \
+    "What kind of deployment do you want to run?" 11 65 5 \
+    "node" "Ethereum node - consensus, execution and validator client" \
+    "rpc" "Ethereum RPC node - consensus and execution client" \
+    "lido_comp" "Lido-compatible node (Community Staking / Simple DVT)" \
+    "rocket" "Validator client only - integrate with RocketPool" \
+    "ssv" "SSV node - consensus, execution and ssv-node" 3>&1 1>&2 2>&3)
+  fi
 
-    if [ "${__deployment}" = "lido_comp" ]; then
-      __deployment=$(whiptail --notags --title "Select deployment type for Lido" --menu \
-      "What kind of deployment to participate in Lido protocol do you want to run?" 13 90 3 \
-      "lido_csm" "[Community Staking] Ethereum node - Nodes, validator client, generated keys" \
-      "lido_ssv" "[Simple DVT] SSV node - Consensus, execution and ssv-node" \
-      "lido_obol" "[Simple DVT] Obol node - Nodes, validator client and charon-node (obol middleware)" 3>&1 1>&2 2>&3)
-    fi
+  if [ "${__deployment}" = "lido_comp" ]; then
+    __deployment=$(whiptail --notags --title "Select deployment type for Lido" --menu \
+    "What kind of deployment to participate in Lido protocol do you want to run?" 13 90 3 \
+    "lido_csm" "[Community Staking] Ethereum node - Nodes, validator client, generated keys" \
+    "lido_ssv" "[Simple DVT] SSV node - Consensus, execution and ssv-node" \
+    "lido_obol" "[Simple DVT] Obol node - Nodes, validator client and charon-node (obol middleware)" 3>&1 1>&2 2>&3)
+  fi
 
   echo "Your deployment choice is: ${__deployment}"
 }
@@ -2511,8 +2843,12 @@ consensus client? (right-click to paste)" 10 60 "${REMOTE_BEACON}" 3>&1 1>&2 2>&
 
 
 query_checkpoint_beacon() {
-  var="RAPID_SYNC_URL"
-  RAPID_SYNC_URL=$(sed -n -e "s/^${var}=\(.*\)/\1/p" "${ENV_FILE}" || true)
+  if [ "${__minty_fresh}" -eq 1 ] || [ "${__network_change}" -eq 1 ]; then
+    RAPID_SYNC_URL=""
+  else
+    var="RAPID_SYNC_URL"
+    RAPID_SYNC_URL=$(sed -n -e "s/^${var}=\(.*\)/\1/p" "${ENV_FILE}" || true)
+  fi
   if [ -z "${RAPID_SYNC_URL}" ]; then
     case "${NETWORK}" in
       "sepolia")
@@ -2536,10 +2872,10 @@ query_checkpoint_beacon() {
     esac
   fi
 
-  RAPID_SYNC_URL=$(whiptail --title "Configure checkpoint URL" --inputbox "What is the URL for your checkpoint \
-provider? (right-click to paste)" 10 65 "${RAPID_SYNC_URL}" 3>&1 1>&2 2>&3)
+  RAPID_SYNC_URL=$(whiptail --title "Configure CL checkpoint sync URL" --inputbox "What is the URL for your CL \
+checkpoint sync provider? (right-click to paste)" 10 65 "${RAPID_SYNC_URL}" 3>&1 1>&2 2>&3)
 
-  echo "Your checkpoint URL is:" "${RAPID_SYNC_URL}"
+  echo "Your checkpoint sync URL is:" "${RAPID_SYNC_URL}"
 }
 
 
@@ -2547,17 +2883,27 @@ query_graffiti() {
   var="GRAFFITI"
   GRAFFITI=$(sed -n -e "s/^${var}=\(.*\)/\1/p" "${ENV_FILE}" || true)
 
-  GRAFFITI=$(whiptail --title "Configure Graffiti" --inputbox "What Graffiti do you want to send with your blocks? \
+  while true; do
+    GRAFFITI=$(whiptail --title "Configure Graffiti" --inputbox "What Graffiti do you want to send with your blocks? \
 (up to 32 characters)" 10 65 "${GRAFFITI}" 3>&1 1>&2 2>&3)
+
+    if [[ $(echo -n "${GRAFFITI}" | wc -c) -gt 32 ]]; then
+      whiptail --msgbox "The graffiti string cannot be longer than 32 characters. Emojis count as 4, each." 16 65
+    else
+      break
+    fi
+  done
 
   echo "your Graffiti is:" "${GRAFFITI}"
 }
 
 
 query_rapid_sync() {
-  if (whiptail --title "Checkpoint Sync" --yesno "Do you want to use CL rapid sync with remote checkpoint?" 10 65) then
-      query_checkpoint_beacon
+  if [[ "${NETWORK}" =~ ^https?:// ]]; then
+    RAPID_SYNC_URL=""
+    return
   fi
+  query_checkpoint_beacon
 }
 
 
@@ -2645,7 +2991,8 @@ https://0x8a72a5ec3e2909fff931c8b42c9e0e6c6e660ac48a98016777fc63a73316b3ffb5c622
       "holesky")
         MEV_RELAYS="https://0xafa4c6985aa049fb79dd37010438cfebeb0f2bd42b115b89dd678dab0670c1de38da0c4e9138c9290a398ecd9a0b3110@boost-relay-holesky.flashbots.net,\
 https://0xaa58208899c6105603b74396734a6263cc7d947f444f396a90f7b7d3e65d102aec7e5e5291b27e08d02c50a050825c2f@holesky.titanrelay.xyz,\
-https://0xb1d229d9c21298a87846c7022ebeef277dfc321fe674fa45312e20b5b6c400bfde9383f801848d7837ed5fc449083a12@relay-holesky.edennetwork.io"
+https://0xb1d229d9c21298a87846c7022ebeef277dfc321fe674fa45312e20b5b6c400bfde9383f801848d7837ed5fc449083a12@relay-holesky.edennetwork.io,\
+https://0x821f2a65afb70e7f2e820a925a9b4c80a159620582c1766b1b09729fec178b11ea22abb3a51f07b288be815a1a2ff516@bloxroute.holesky.blxrbdn.com"
         ;;
       "mainnet")
         MEV_RELAYS="https://0xac6e77dfe25ecd6110b8e780608cce0dab71fdd5ebea22a16c0205200f2f8e2e3ad3b71d3499c54ad14d6c21b41a37ae@boost-relay.flashbots.net,\
@@ -2755,7 +3102,8 @@ https://0x95a0a6af2566fa7db732020bb2724be61963ac1eb760aa1046365eb443bd4e3cc0fba0
         "holesky")
           MEV_RELAYS="https://0xafa4c6985aa049fb79dd37010438cfebeb0f2bd42b115b89dd678dab0670c1de38da0c4e9138c9290a398ecd9a0b3110@boost-relay-holesky.flashbots.net,\
 https://0xaa58208899c6105603b74396734a6263cc7d947f444f396a90f7b7d3e65d102aec7e5e5291b27e08d02c50a050825c2f@holesky.titanrelay.xyz,\
-https://0xb1d229d9c21298a87846c7022ebeef277dfc321fe674fa45312e20b5b6c400bfde9383f801848d7837ed5fc449083a12@relay-holesky.edennetwork.io"
+https://0xb1d229d9c21298a87846c7022ebeef277dfc321fe674fa45312e20b5b6c400bfde9383f801848d7837ed5fc449083a12@relay-holesky.edennetwork.io,
+https://0x821f2a65afb70e7f2e820a925a9b4c80a159620582c1766b1b09729fec178b11ea22abb3a51f07b288be815a1a2ff516@bloxroute.holesky.blxrbdn.com"
           ;;
         "mainnet")
           MEV_RELAYS=https://0xac6e77dfe25ecd6110b8e780608cce0dab71fdd5ebea22a16c0205200f2f8e2e3ad3b71d3499c54ad14d6c21b41a37ae@boost-relay.flashbots.net,\
@@ -2938,7 +3286,7 @@ handle_error() {
       echo "Web3signer slashing protection database migration failed, after switching to the migrated data."
       echo
       echo "The slashing protection database itself is likely fine, but somewhere in the switch to PostgreSQL 16"
-      echo "an error occured, which is likely to keep your node from functioning correctly."
+      echo "an error occurred, which is likely to keep your node from functioning correctly."
     else
       echo "Web3signer slashing protection database migration failed, but before removing the original data."
       echo
@@ -2948,6 +3296,27 @@ handle_error() {
   fi
 }
 
+
+check_legacy() {
+  var="COMPOSE_FILE"
+  value=$(sed -n -e "s/^${var}=\(.*\)/\1/p" "${ENV_FILE}" || true)
+
+# Literal match intended
+# shellcheck disable=SC2076
+  if [[ "${value}" =~ "-allin1.yml" ]]; then
+    if [[ "${value}" =~ "teku-allin1.yml" ]]; then
+      __client="Teku"
+    elif [[ "${value}" =~ "nimbus-allin1.yml" ]]; then
+      __client="Nimbus"
+    else
+      __client="Mystery"
+    fi
+    if ! (whiptail --title "All-In-One detected" --yesno "All-In-One client ${__client} detected. Re-configuration requires re-import of the keys, which has to be treated like a move with 15 minutes downtime, to avoid slashing. Do you wish to continue, regardless?" 10 65 --defaultno) then
+      echo "Aborting config"
+      exit 0
+    fi
+  fi
+}
 
 config() {
   check_for_snap
@@ -2965,6 +3334,7 @@ config() {
 
   __during_config=1
 
+  check_legacy
   query_network
   query_deployment
   case "${__deployment}" in
@@ -3132,6 +3502,8 @@ config() {
   set_value_in_env
   var=EL_NODE
   set_value_in_env
+  var=JWT_SECRET
+  set_value_in_env
   var=NETWORK
   set_value_in_env
   var=MEV_BOOST
@@ -3206,7 +3578,7 @@ version() {
       docompose exec validator validator --version
       echo
       ;;&
-    *nimbus.yml* | *nimbus-cl-only* )
+    *nimbus.yml* | *nimbus-allin1.yml* |  *nimbus-cl-only* )
       docompose exec consensus nimbus_beacon_node --version
       echo
       ;;&
@@ -3214,7 +3586,7 @@ version() {
       docompose exec validator nimbus_validator_client --version
       echo
       ;;&
-    *teku.yml* | *teku-cl-only* )
+    *teku.yml* | *teku-allin1.yml* | *teku-cl-only* )
       docompose exec consensus /opt/teku/bin/teku --version
       echo
       ;;&
@@ -3259,11 +3631,32 @@ version() {
       docompose exec grafana /run.sh -v
       echo
       ;;&
+    *traefik-*.yml* )
+      echo "Traefik"
+      docompose exec traefik traefik version
+      echo
+      ;;&
   esac
 }
 
 
-help() {
+__update_help() {
+  echo "usage: $__me update [--refresh-targets] [--non-interactive]"
+  echo
+  echo "Updates Eth Docker itself, as required the contents of \".env\", and the clients."
+  echo
+  echo "A combination of \"git pull\" for Eth Docker, some bash scripting to bring new variables from \"default.env\","
+  echo "and \"docker compose pull\" as well as \"docker compose build\" for the clients."
+  echo
+  echo "If warranted, will also offer resync when clients require it, or upgrade of PostgreSQL version."
+  echo
+  echo "\"--refresh-targets\" sets Docker tags, source targets, and repos of clients back to the defaults in \"default.env\"."
+  echo "\"--non-interactive\" does not ask questions and assumes Yes for database resyncs and migrations."
+  echo
+}
+
+
+__full_help() {
   echo "usage: $__me [-h|--help] <command>"
   echo
   echo "commands:"
@@ -3297,6 +3690,10 @@ help() {
   echo "    consider a resync with PBSS instead, \"$__me resync-execution\""
   echo "  prune-nethermind [--non-interactive]"
   echo "    restarts the Nethermind execution client and prunes its DB."
+  echo "  prune-besu [--non-interactive]"
+  echo "    stops the Besu execution client and prunes trie-logs."
+  echo "  prune-lighthouse [--non-interactive]"
+  echo "    stops the Lighthouse consensus client and prunes state."
   echo "  resync-execution"
   echo "    removes the execution layer database and forces a resync."
   echo "  resync-consensus"
@@ -3322,6 +3719,13 @@ help() {
 }
 
 
+help() {
+  case $* in
+    *update*) __update_help;;
+    *) __full_help;;
+  esac
+}
+
 # Main body from here
 ENV_FILE=.env
 __during_config=0
@@ -3337,20 +3741,14 @@ fi
 
 trap 'handle_error $? $LINENO' ERR
 
-if [[ "$#" -eq 0 || "$1" == "-h" || "$1" == "--help" ]]; then
-  help
+if [[ "$#" -eq 0 || "$*" =~ "-h" ]]; then # Lazy match for -h and --help but also --histogram, so careful here
+  help "$@"
   exit 0
 fi
 
 cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 # Use this to make sure root doesn't end up owning files
-if [[ "$OSTYPE" == "darwin"* ]]; then
-# This is a macOS-ism
-# shellcheck disable=SC2016
-  OWNER=$(stat -f '$Su' .)
-else
-  OWNER=$(stat -c '%U' .)
-fi
+OWNER=$(stat --format=%U .)
 
 if [ "${OWNER}" == "root" ]; then
   echo "Please install Eth Docker as a non-root user."
@@ -3391,7 +3789,7 @@ fi
 
 case "$__command" in
   help|config|keys|update|up|start|down|stop|restart|version|logs|cmd|terminate|prune-geth|prune-nethermind\
-      |resync-execution|resync-consensus|attach-geth|keyimport|space)
+      |prune-besu|prune-lighthouse|resync-execution|resync-consensus|attach-geth|keyimport|space)
     $__command "$@";;
   *)
     echo "Unrecognized command $__command"
@@ -3418,4 +3816,13 @@ elif [ "${__old_compose}" -eq 1 ]; then
   echo
   echo "You can install it with \"sudo apt update && sudo apt install docker-compose-v2\"."
   echo "You can remove the old docker-compose with \"sudo apt-mark manual docker.io && sudo apt --autoremove remove docker-compose\"."
+fi
+
+if [ "${__old_docker}" -eq 1 ]; then
+  echo
+  echo "Docker version ${__docker_version} detected. This version no longer receives security updates."
+  echo "Please update to a current version."
+  echo
+  echo "This should be as simple as \"sudo apt update && sudo apt dist-upgrade\" on Debian/Ubuntu"
+  echo "or updating Docker Desktop on macOS and Windows."
 fi

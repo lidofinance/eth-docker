@@ -1,3 +1,4 @@
+# Nimbus consensus also handles validator keys: All In One
 version: "3.9"
 x-logging: &logging
   logging:
@@ -82,6 +83,7 @@ services:
       - metrics.scrape=true
       - metrics.path=/metrics
       - metrics.port=8008
+      - metrics.instance=consensus
 
   wipe-db:
     profiles: ["tools"]

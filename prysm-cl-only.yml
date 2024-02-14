@@ -46,6 +46,7 @@ services:
       default:
         aliases:
           - eth2
+          - ${NETWORK}-consensus
     <<: *logging
     entrypoint:
       - docker-entrypoint.sh
@@ -72,7 +73,7 @@ services:
       - --p2p-udp-port
       - ${PRYSM_UDP_PORT}
       - --p2p-max-peers
-      - ${CL_MAX_PEER_COUNT:-45}
+      - ${CL_MAX_PEER_COUNT:-70}
       - --verbosity
       - ${LOG_LEVEL}
       - --accept-terms-of-use
@@ -82,10 +83,12 @@ services:
       - "8008"
       - --suggested-fee-recipient
       - ${FEE_RECIPIENT}
+      - --enable-debug-rpc-endpoints
     labels:
       - metrics.scrape=true
       - metrics.path=/metrics
       - metrics.port=8008
+      - metrics.instance=consensus
 
 volumes:
   prysmconsensus-data:

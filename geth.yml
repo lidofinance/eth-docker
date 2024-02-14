@@ -28,8 +28,10 @@ services:
       - ARCHIVE_NODE=${ARCHIVE_NODE:-}
       - NETWORK=${NETWORK}
       - IPV6=${IPV6:-false}
+      - ANCIENT_DIR=${ANCIENT_DIR:-}
     volumes:
       - geth-eth1-data:/var/lib/goethereum
+      - ${ANCIENT_DIR:-.nada}:/var/lib/ancient
       - /etc/localtime:/etc/localtime:ro
       - jwtsecret:/var/lib/goethereum/ee-secret
     ports:
@@ -79,6 +81,7 @@ services:
       - metrics.scrape=true
       - metrics.path=/debug/metrics/prometheus
       - metrics.port=6060
+      - metrics.instance=execution
 
   set-prune-marker:
     profiles: ["tools"]
@@ -89,6 +92,7 @@ services:
       - geth-eth1-data:/var/lib/goethereum
     entrypoint: ["/bin/sh","-c"]
     command: /bin/sh
+
 volumes:
   geth-eth1-data:
   jwtsecret:

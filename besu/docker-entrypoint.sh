@@ -19,7 +19,7 @@ if [[ ! -f /var/lib/besu/ee-secret/jwtsecret ]]; then
 fi
 
 if [[ -O "/var/lib/besu/ee-secret" ]]; then
-  # In case someone specificies JWT_SECRET but it's not a distributed setup
+  # In case someone specifies JWT_SECRET but it's not a distributed setup
   chmod 777 /var/lib/besu/ee-secret
 fi
 if [[ -O "/var/lib/besu/ee-secret/jwtsecret" ]]; then
@@ -46,8 +46,7 @@ if [[ "${NETWORK}" =~ ^https?:// ]]; then
   bootnodes="$(paste -s -d, "/var/lib/besu/testnet/${config_dir}/bootnode.txt")"
   set +e
   __network="--genesis-file=/var/lib/besu/testnet/${config_dir}/besu.json --bootnodes=${bootnodes} \
---kzg-trusted-setup=/var/lib/besu/testnet/${config_dir}/trusted_setup.txt --Xfilter-on-enr-fork-id=true \
---rpc-http-api=ADMIN,CLIQUE,MINER,ETH,NET,DEBUG,TXPOOL,ENGINE,TRACE,WEB3"
+--Xfilter-on-enr-fork-id=true --rpc-http-api=ADMIN,CLIQUE,MINER,ETH,NET,DEBUG,TXPOOL,ENGINE,TRACE,WEB3"
 else
   __network="--network ${NETWORK} --rpc-http-api WEB3,ETH,NET"
 fi
@@ -56,9 +55,28 @@ if [ "${ARCHIVE_NODE}" = "true" ]; then
   echo "Besu archive node without pruning"
   __prune="--data-storage-format=FOREST --sync-mode=FULL"
 else
-  __prune="--data-storage-format=BONSAI --sync-mode=X_SNAP"
+  __prune="--data-storage-format=BONSAI --sync-mode=X_SNAP --Xsnapsync-synchronizer-flat-db-healing-enabled=true \
+--Xbonsai-trie-log-pruning-enabled=true"
 fi
 
+__memtotal=$(awk '/MemTotal/ {printf "%d", int($2/1024/1024)}' /proc/meminfo)
+if [ "${__memtotal}" -gt 60 ]; then
+  __spec="--Xplugin-rocksdb-high-spec-enabled=true"
+else
+  __spec=""
+fi
+
+if [ -f /var/lib/besu/prune-marker ]; then
+  rm -f /var/lib/besu/prune-marker
+  if [ "${ARCHIVE_NODE}" = "true" ]; then
+    echo "Besu is an archive node. Not attempting to prune trie-logs: Aborting."
+    exit 1
+  fi
 # Word splitting is desired for the command line parameters
 # shellcheck disable=SC2086
-exec "$@" ${__network} ${__prune} ${EL_EXTRAS}
+  exec "$@" ${__network} ${__prune} ${EL_EXTRAS} storage x-trie-log prune
+else
+# Word splitting is desired for the command line parameters
+# shellcheck disable=SC2086
+  exec "$@" ${__network} ${__prune} ${__spec} ${EL_EXTRAS}
+fi

@@ -40,10 +40,15 @@ services:
       - NETWORK=${NETWORK}
       - IPV6=${IPV6:-false}
       - CL_P2P_PORT=${CL_P2P_PORT:-9000}
-      - NODE_OPTIONS=${LODESTAR_HEAP:---max-old-space-size=4096}
+      - NODE_OPTIONS=${LODESTAR_HEAP:---max-old-space-size=8192}
     ports:
       - ${HOST_IP:-}${CL_P2P_PORT:-9000}:${CL_P2P_PORT:-9000}/tcp
       - ${HOST_IP:-}${CL_P2P_PORT:-9000}:${CL_P2P_PORT:-9000}/udp
+    networks:
+      default:
+        aliases:
+          - eth2
+          - ${NETWORK}-consensus
     <<: *logging
     entrypoint:
       - docker-entrypoint.sh
@@ -67,7 +72,7 @@ services:
       - 0.0.0.0
       - --execution.urls
       - ${EL_NODE}
-      - --jwt-secret
+      - --jwtSecret
       - /var/lib/lodestar/consensus/ee-secret/jwtsecret
       - --targetPeers
       - ${CL_MIN_PEER_COUNT:-50}
@@ -79,6 +84,7 @@ services:
       - metrics.scrape=true
       - metrics.path=/metrics
       - metrics.port=8008
+      - metrics.instance=consensus
 
 volumes:
   lsconsensus-data:

@@ -53,6 +53,7 @@ services:
       default:
         aliases:
           - eth2
+          - ${NETWORK}-consensus
     <<: *logging
     entrypoint:
       - docker-entrypoint.sh
@@ -78,6 +79,7 @@ services:
       - metrics.scrape=true
       - metrics.path=/metrics
       - metrics.port=8008
+      - metrics.instance=consensus
 
   validator:
     restart: "unless-stopped"
@@ -122,6 +124,7 @@ services:
       - metrics.scrape=true
       - metrics.path=/metrics
       - metrics.port=8009
+      - metrics.instance=validator
 
   validator-exit:
     profiles: ["tools"]
