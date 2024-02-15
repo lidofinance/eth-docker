@@ -2618,7 +2618,6 @@ query_deployment() {
   if [ "${__deployment}" = "lido_comp" ]; then
     __deployment=$(whiptail --notags --title "Select deployment type for Lido" --menu \
     "What kind of deployment to participate in Lido protocol do you want to run?" 13 90 3 \
-    "lido_csm" "[Community Staking] Ethereum node - Nodes, validator client, generated keys" \
     "lido_ssv" "[Simple DVT] SSV node - Consensus, execution and ssv-node" \
     "lido_obol" "[Simple DVT] Obol node - Nodes, validator client and charon-node (obol middleware)" 3>&1 1>&2 2>&3)
   fi
