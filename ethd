@@ -2666,7 +2666,7 @@ query_coinbase() {
                     FEE_RECIPIENT="0x388c818ca8b9251b393131c08a736a67ccb19297"
                     ;;
                 "holesky")
-                    FEE_RECIPIENT="0xE73a3602b99f1f913e72F8bdcBC235e206794Ac8"
+                    FEE_RECIPIENT="0x4e9449097Ff46F783Ee60835e68Aa95Be176C353"
                     ;;
                 *)
                     FEE_RECIPIENT="0x0000000000000000000000000000000000000000"
@@ -3144,7 +3144,7 @@ config() {
               WITHDRAWAL_CREDENTIALS="0xB9D7934878B5FB9610B3fE8A5e441e8fad7E293f"
               ;;
           "holesky")
-              WITHDRAWAL_CREDENTIALS="0xF0179dEC45a37423EAD4FaD5fCb136197872EAd9"
+              WITHDRAWAL_CREDENTIALS="0x285fa3Cac35761d183FFff76cBd9776327FC3D49"
               ;;
           *)
               WITHDRAWAL_CREDENTIALS="0x0000000000000000000000000000000000000000"
