@@ -2406,6 +2406,7 @@ query_deployment() {
     __deployment=$(whiptail --notags --title "Select deployment type for Lido" --menu \
     "What kind of deployment to participate in Lido protocol do you want to run?" 13 90 3 \
     "lido_csm" "[Community Staking] CSM node - Consensus, execution and validator client" \
+    "lido_csm_vc" "[Community Staking] CSM Validator client only - integrate with remote node" \
     "lido_ssv" "[Simple DVT] SSV node - Consensus, execution and ssv-node" \
     "lido_obol" "[Simple DVT] Obol node - Nodes, validator client and charon node (obol middleware)" 3>&1 1>&2 2>&3)
   fi
@@ -2422,7 +2423,7 @@ query_validator_client() {
     "teku-vc-only.yml" "Teku validator client" \
     "lodestar-vc-only.yml" "Lodestar validator client" \
     "nimbus-vc-only.yml" "Nimbus validator client" 3>&1 1>&2 2>&3)
-  elif [ "${__deployment}" = "rocket" ]; then
+  elif [[ "${__deployment}" = "rocket" || "${__deployment}" = "lido_csm_vc" ]]; then
     if uname -a | grep -q aarch64; then
       CONSENSUS_CLIENT=$(whiptail --notags --title "Select validator client" --menu \
       "Which validator client do you want to run?" 11 65 4 \
@@ -3140,7 +3141,7 @@ config() {
     "lido_obol")
       query_consensus_client
       ;;
-    "validator" | "rocket")
+    "validator" | "rocket" | "lido_csm_vc")
       query_validator_client
       ;;
     "ssv" | "lido_ssv")
@@ -3363,13 +3364,14 @@ config() {
   if [ -n "${GRAFANA_CLIENT+x}" ]; then
     COMPOSE_FILE="${COMPOSE_FILE}:${GRAFANA_CLIENT}"
   fi
-  if [ "${MEV_BOOST}" = "true" ] && [ ! "${__deployment}" = "rocket" ]; then
+  if [ "${MEV_BOOST}" = "true" ] && [ ! "${__deployment}" = "rocket" ] && [ ! "${__deployment}" = "lido_csm_vc" ]; then
     COMPOSE_FILE="${COMPOSE_FILE}:mev-boost.yml"
   fi
   if [ "${__deployment}" = "lido_obol" ]; then
     COMPOSE_FILE="${COMPOSE_FILE}:lido-obol.yml"
   fi
-  if [ "${__deployment}" = "lido_csm" ]; then
+  # todo: || "${__deployment}" = "lido_csm_vc"
+  if [[ "${__deployment}" = "lido_csm"  ]]; then
     COMPOSE_FILE="${COMPOSE_FILE}:lido-deposit-cli.yml"
   elif { [ "${__deployment}" = "node" ] || [ "${__deployment}" = "rocket" ]; } \
   && [ "${NETWORK}" = "holesky" ]; then
