@@ -1,3 +1,26 @@
+# 🚸 MIGRATION GUIDE
+
+This repository is no longer being updated!
+
+⚠️ **Migration is mandatory if you want to receive regular updates for eth-docker**
+
+How can I migrate?
+
+1. Go to your eth-docker folder
+2. Change the origin remote repo:
+```
+git remote set-url origin https://github.com/eth-educators/eth-docker
+```
+3. Change `COMPOSE_FILE` variable value in your `.env` file: you should change `lido-deposit-cli.yml` to `deposit-cli.yml`
+```
+sed -i '/^COMPOSE_FILE=/s/lido-deposit-cli.yml/deposit-cli.yml/' .env
+```
+4. Run update
+```
+./ethd update
+```
+
+
 # Eth Docker: Docker automation for Ethereum nodes.
 
 [![GitPOAP Badge](https://public-api.gitpoap.io/v1/repo/eth-educators/eth-docker/badge)](https://www.gitpoap.io/gh/eth-educators/eth-docker)
